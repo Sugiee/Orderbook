@@ -21,6 +21,10 @@ public:
         , remainingQuantity_ { quantity }
     {}
 
+    Order(OrderId orderId, Side side, Quantity quantity) 
+        : Order(OrderType::Market, orderId, side, Constants::InvalidPrice, quantity)
+    {}
+
     // Public APIs
     OrderType GetOrderType() const { return orderType_; }
     OrderId GetOrderId() const { return orderId_; }
@@ -36,10 +40,18 @@ public:
             oss << "Order ( " << GetOrderId() << ") cannot be filled for more than its remaining quantity.";
             throw std::logic_error(oss.str());
         }
-
         remainingQuantity_ -= quantity;
     }
+    void ToGoodTillCancel(Price price) {
+        if (GetOrderType() != OrderType::Market) {
+            std::ostringstream oss2;
+            oss2 << "Order ( " << GetOrderId() << ") cannot be filled for more than its remaining quantity.";
+        }
 
+        price_ = price;
+        orderType_ = OrderType::GoodTillCancel;
+    }
+    
 private:
     OrderType orderType_;
     OrderId orderId_;

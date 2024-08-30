@@ -13,6 +13,14 @@
 #include "Trade.h"
 
 class Orderbook {
+public:
+    Trades AddOrder(OrderPointer order);
+    void CancelOrder(OrderId orderId);
+    Trades ModifyOrder(orderModify order);
+    
+    OrderbookLevelInfos GetOrderInfos() const;
+    std::size_t Size() const;
+
 private:
     struct OrderEntry {
         OrderPointer order_ { nullptr };
@@ -24,16 +32,9 @@ private:
     std::map<Price, OrderPointers, std::less<Price>> asks_;
     std::unordered_map<OrderId, OrderEntry> orders_;
 
+    mutable std::mutex ordersMutex_;
+
+    // internal functions
     bool CanMatch(Side side, Price price) const;
     Trades MatchOrders();
-
-public:
-    Trades AddOrder(OrderPointer order);
-    void CancelOrder(OrderId orderId);
-    Trades MatchOrder(orderModify order);
-    //Trades ModifyOrder(OrderModify order);
-
-    //std::size_t Size() const;
-    std::size_t Size() const { return orders_.size(); }
-    OrderbookLevelInfos GetOrderInfos() const;
 };

@@ -2,6 +2,68 @@
 
 #include <numeric>
 
+Trades Orderbook::AddOrder(OrderPointer order) {
+    std::scoped_lock ordersLock{ ordersMutex_ };
+    
+    if (orders_.find(order->GetOrderId()) != orders_.end())
+        return { };
+
+    if (order->GetOrderType() == OrderType::Market) {
+        if (order->GetSide() == Side::Buy && !asks_.empty()) {
+            const auto& [worstAsk, _] = *asks_.rbegin();
+            order->ToGoodTillCancel(worstAsk);
+        }
+        else if (order->GetSide() == Side::Sell && !bids_.empty()) {
+            const auto& [worstBid, _] = *bids_.rbegin();
+            order->ToGoodTillCancel(worstBid);
+        }
+        else
+            return{ };
+    }
+
+    if (order->GetOrderType() == OrderType::FillAndKill && !CanMatch(order->GetSide(), order->GetPrice()))
+        return { };
+
+    OrderPointers:: iterator iterator;
+
+    if (order->GetSide() == Side::Buy) {
+        auto& orders = bids_[order->GetPrice()];
+        orders.push_back(order);
+        iterator = std::next(orders.begin(), orders.size() -1);
+    } 
+    else {
+        auto& orders = asks_[order->GetPrice()];
+        orders.push_back(order);
+        iterator = std::next(orders.begin(), orders.size() - 1);
+    }
+
+    orders_.insert({ order->GetOrderId(), OrderEntry{ order, iterator } });
+    return MatchOrders();
+}
+
+void Orderbook::CancelOrder(OrderId orderId) {
+    if (!(orders_.find(orderId) != orders_.end()))
+        return;
+
+    const auto& [order, iterator] = orders_.at(orderId);
+    orders_.erase(orderId);
+
+    if (order->GetSide() == Side::Sell) {
+        auto price = order->GetPrice();
+        auto& orders = asks_.at(price);
+        orders.erase(iterator);
+        if (orders.empty())
+            asks_.erase(price);
+    }
+    else {
+        auto price = order->GetPrice();
+        auto& orders = bids_.at(price);
+        orders.erase(iterator);
+        if (orders.empty())
+            bids_.erase(price);
+    }
+}
+
 bool Orderbook::CanMatch(Side side, Price price) const {
     if (side == Side::Buy) {
         if (asks_.empty()) 
@@ -82,60 +144,21 @@ Trades Orderbook::MatchOrders() {
     return trades;
 }
 
-Trades Orderbook::AddOrder(OrderPointer order) {
-    if (orders_.find(order->GetOrderId()) != orders_.end())
-        return { };
+Trades Orderbook::ModifyOrder(orderModify order) {
+    OrderType orderType;
 
-    if (order->GetOrderType() == OrderType::FillAndKill && !CanMatch(order->GetSide(), order->GetPrice()))
-        return { };
+    {
+        std::scoped_lock ordersLock{ ordersMutex_ };
 
-    OrderPointers:: iterator iterator;
+        if (!(orders_.find(order.GetOrderId()) != orders_.end()))
+            return { };
 
-    if (order->GetSide() == Side::Buy) {
-        auto& orders = bids_[order->GetPrice()];
-        orders.push_back(order);
-        iterator = std::next(orders.begin(), orders.size() -1);
-    } 
-    else {
-        auto& orders = asks_[order->GetPrice()];
-        orders.push_back(order);
-        iterator = std::next(orders.begin(), orders.size() - 1);
+        const auto& [existingOrder, _] = orders_.at(order.GetOrderId());
+        orderType = existingOrder->GetOrderType();
     }
-
-    orders_.insert({ order->GetOrderId(), OrderEntry{ order, iterator } });
-    return MatchOrders();
-}
-
-void Orderbook::CancelOrder(OrderId orderId) {
-    if (!(orders_.find(orderId) != orders_.end()))
-        return;
-
-    const auto& [order, iterator] = orders_.at(orderId);
-    orders_.erase(orderId);
-
-    if (order->GetSide() == Side::Sell) {
-        auto price = order->GetPrice();
-        auto& orders = asks_.at(price);
-        orders.erase(iterator);
-        if (orders.empty())
-            asks_.erase(price);
-    }
-    else {
-        auto price = order->GetPrice();
-        auto& orders = bids_.at(price);
-        orders.erase(iterator);
-        if (orders.empty())
-            bids_.erase(price);
-    }
-}
-
-Trades Orderbook::MatchOrder(orderModify order) {
-    if (!(orders_.find(order.GetOrderId()) != orders_.end()))
-        return { };
     
-    const auto& [existingOrder, _] = orders_.at(order.GetOrderId());
     CancelOrder(order.GetOrderId());
-    return AddOrder(order.ToOrderPointer(existingOrder->GetOrderType()));
+    return AddOrder(order.ToOrderPointer(orderType));
 }  
 
 OrderbookLevelInfos Orderbook::GetOrderInfos() const {
@@ -159,6 +182,7 @@ OrderbookLevelInfos Orderbook::GetOrderInfos() const {
     return OrderbookLevelInfos{ bidInfos, askInfos };
 }
 
-
-
-
+std::size_t Orderbook::Size() const {
+    std::scoped_lock ordersLock{ ordersMutex_ };
+	return orders_.size();
+}
